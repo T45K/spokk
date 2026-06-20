@@ -4,6 +4,7 @@ import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 import org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar
 import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 import org.jetbrains.kotlin.config.CompilerConfiguration
+import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrarAdapter
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.powerassert.PowerAssertConfiguration
 import org.jetbrains.kotlin.powerassert.PowerAssertIrGenerationExtension
@@ -28,6 +29,9 @@ class SpokkCompilerPluginRegistrar : CompilerPluginRegistrar() {
     override val supportsK2: Boolean = true
 
     override fun ExtensionStorage.registerExtensions(configuration: CompilerConfiguration) {
+        // FIR: synthesise the `_` matcher property so Spock's `_` placeholder can be written.
+        FirExtensionRegistrarAdapter.registerExtension(SpokkFirExtensionRegistrar())
+
         IrGenerationExtension.registerExtension(SpokkIrGenerationExtension())
         IrGenerationExtension.registerExtension(
             PowerAssertIrGenerationExtension(

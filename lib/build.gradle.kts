@@ -34,6 +34,11 @@ dependencies {
     api(libs.junit.jupiter.api)
     implementation(libs.kotlinx.coroutines.core)
 
+    // MockK powers the Spock-style mocking DSL (`Mock`/`Stub`/`Spy`, stubbing and interaction
+    // verification). The DSL exposes MockK scope types (`MockKMatcherScope`, `MockKStubScope`,
+    // `MockKVerifyScope`) in its signatures, so MockK is part of the public API surface.
+    api(libs.mockk)
+
     // Use the Kotlin Test integration.
     testImplementation("org.jetbrains.kotlin:kotlin-test")
 

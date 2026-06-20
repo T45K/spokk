@@ -174,11 +174,100 @@ class MathSpec {
   ordinary lambda parameters — a *destructuring* parameter (`{ (a, b) -> ... }`) drops the leading marker statement and
   silently disables the assertions.
 
+### 8. Interaction-based testing (mocks)
+
+Spokk mirrors Spock's [interaction-based testing](https://spockframework.org/spock/docs/2.4/interaction_based_testing.html)
+by wrapping [MockK](https://mockk.io) in a small Spock-flavoured DSL (see
+[`Mocking.kt`](lib/src/main/kotlin/io/github/spokk/Mocking.kt)). Collaborators are created with `Mock()` / `Stub()` /
+`Spy()`, their responses are stubbed, and the expected interactions are verified in a `then` block with a *cardinality*:
+
+```kotlin
+import io.github.spokk.*
+import org.junit.jupiter.api.Test
+
+interface Subscriber {
+    fun receive(message: String): String
+}
+
+class PublisherSpec {
+    @Test
+    fun `sends each message to all subscribers`() {
+        given
+        val subscriber = Mock<Subscriber>()
+        val subscriber2 = Mock<Subscriber>()
+        val publisher = Publisher()
+        publisher.subscribe(subscriber)
+        publisher.subscribe(subscriber2)
+
+        `when`
+        publisher.send("hello")
+
+        then
+        1 * { subscriber.receive("hello") }       // exactly one call
+        1 * { subscriber2.receive("hello") }
+    }
+}
+```
+
+* **Creating collaborators.** `Mock<T>()` and `Stub<T>()` are *lenient* mocks (like Spock and unlike a strict
+  framework): an unstubbed call returns a default value instead of failing. `Spy(instance)` wraps a real object and runs
+  its real methods unless they are stubbed.
+* **Cardinality (verification).** A statement of the form `n * { … }` in a `then` block verifies how often the call
+  inside the lambda happened — `1 * { … }` (exactly once), `0 * { … }` (never), and `(1..3) * { … }` (an inclusive
+  range; use `(1..Int.MAX_VALUE)` for Spock's "at least once"). Verification really runs: an unsatisfied cardinality
+  fails the test with an `AssertionError`.
+* **Stubbing.** The closure-free form mirrors Spock's `subscriber.receive(_) >> "ok"` most closely: write the call
+  followed by `> value` and the compiler plugin rewrites it into a real stubbing. The "any argument" placeholder is
+  written `` `_` `` (back-tick escaped, since `_` is a reserved name in Kotlin) or `any()`:
+
+  ```kotlin
+  given
+  subscriber.receive(`_`) > "ok"     // == Spock's subscriber.receive(_) >> "ok"
+  subscriber.receive(any()) > "ok"   // the same, spelled with any()
+  ```
+
+  `> value` only works when the call's return type is `Comparable` (e.g. `String`, `Int`). For successive values,
+  computed answers or throwing — things `>` cannot express — use the `stub { … }` recording with MockK's response
+  generators:
+
+  ```kotlin
+  stub { subscriber.receive(`_`) } returns "ok"                         // a fixed value
+  stub { subscriber.receive(any()) } returnsMany listOf("ok", "error")  // successive values (last repeats)
+  stub { subscriber.receive(any()) } answers { firstArg<String>().uppercase() } // computed from the arguments
+  stub { subscriber.receive("boom") } throws IllegalStateException()    // throwing
+  ```
+
+* **Argument constraints** are the `` `_` `` / `any()` "any argument" markers above, or any plain MockK matcher used
+  inside the recording lambda: `match { it.length > 3 }`, `eq(…)`, and so on. `` `_` `` and `any()` work everywhere a
+  matcher is expected — inside `stub { … }`, a `n * { … }` cardinality, and a closure-free `> value` stub.
+
+The DSL is a thin shim, so the mapping from Spock to spokk is direct:
+
+| Spock                                         | spokk                                                       |
+|-----------------------------------------------|-------------------------------------------------------------|
+| `Subscriber subscriber = Mock()`              | `val subscriber = Mock<Subscriber>()`                       |
+| `1 * subscriber.receive("hello")`             | `1 * { subscriber.receive("hello") }`                       |
+| `(1..3) * subscriber.receive(_)`              | `` (1..3) * { subscriber.receive(`_`) } ``                  |
+| `subscriber.receive(_) >> "ok"`               | `` subscriber.receive(`_`) > "ok" ``                        |
+| `subscriber.receive(_) >>> ["ok", "error"]`   | `stub { subscriber.receive(any()) } returnsMany [...]`      |
+| `subscriber.receive({ it.size() > 3 })`       | `subscriber.receive(match { it.length > 3 })`               |
+
+> Why `` `_` `` and not a bare `_`, and why `>` instead of `>>`? Kotlin reserves `_` as an identifier (it can only be
+> written back-tick escaped) and has no `>>` operator, so spokk uses the closest legal spellings: `` `_` `` for the
+> matcher and a single `>` for the stub value. The `` `_` `` placeholder is a compiler-synthesised property and the
+> closure-free `> value` stub is a plugin rewrite — both are turned into ordinary MockK calls during compilation.
+>
+> The `n * { … }` cardinality still needs the braces because, unlike Groovy, Kotlin evaluates `subscriber.receive(...)`
+> eagerly; the lambda defers it so the call can be verified instead of run.
+
+Because MockK mocks classes via a dynamically attached Java agent, you may see a *"A Java agent has been loaded
+dynamically"* warning on modern JDKs; it is harmless. Mocking interfaces (as above) does not need the agent.
+
 ## Module layout
 
 | Module             | Description                                                                                          |
 |--------------------|------------------------------------------------------------------------------------------------------|
-| `:lib`             | The runtime markers (`given`/`when`/`then`/…), the data-driven `where` DSL, and example specs.       |
+| `:lib`             | The runtime markers (`given`/`when`/`then`/…), the data-driven `where` DSL, the MockK-backed mocking DSL, and example specs. |
 | `:compiler-plugin` | The K2 compiler plugin that turns bare booleans after `then` into Power-assert checks.               |
 
 `:lib` loads the plugin (together with the Power-assert plugin it delegates to) via `-Xplugin` and turns on
